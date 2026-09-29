@@ -1,0 +1,39 @@
+{
+	"name": "@xiaoliyo/pi-attachments",
+	"version": "0.1.0",
+	"description": "Paste/drag image and file attachments for the pi coding agent with inline thumbnails",
+	"license": "MIT",
+	"type": "module",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/xiaoliei/pi-extensions.git",
+		"directory": "extensions/pi-attachments"
+	},
+	"keywords": [
+		"pi",
+		"pi-extension",
+		"coding-agent",
+		"attachments",
+		"images"
+	],
+	"files": [
+		"src",
+		"README.md"
+	],
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"scripts": {
+		"test": "node --test test/*.test.ts",
+		"check": "tsc --noEmit"
+	},
+	"pi": {
+		"extensions": ["./src/index.ts"]
+	},
+	"devDependencies": {
+		"@earendil-works/pi-coding-agent": "0.87.1",
+		"@earendil-works/pi-tui": "0.87.1",
+		"@types/node": "24.12.4",
+		"typescript": "5.9.3"
+	}
+}

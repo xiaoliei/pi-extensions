@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      exts: ${{ steps.discover.outputs.exts }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Discover extensions
+        id: discover
+        run: echo "exts=$(node scripts/discover-extensions.mjs --json)" >> "$GITHUB_OUTPUT"
+
+  test:
+    runs-on: ubuntu-latest
+    needs: discover
+    strategy:
+      fail-fast: false
+      matrix:
+        ext: ${{ fromJSON(needs.discover.outputs.exts) }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: extensions/${{ matrix.ext }}/package-lock.json
+
+      - name: Install, test, typecheck
+        working-directory: extensions/${{ matrix.ext }}
+        run: |
+          npm ci --ignore-scripts
+          npm test
+          npm run check

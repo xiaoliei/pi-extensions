@@ -1,0 +1,32 @@
+{
+	"compilerOptions": {
+		"noEmit": true,
+		"strict": true,
+		"erasableSyntaxOnly": true,
+		"esModuleInterop": true,
+		"skipLibCheck": true,
+		"forceConsistentCasingInFileNames": true,
+		"module": "NodeNext",
+		"moduleResolution": "NodeNext",
+		"target": "ES2022",
+		"lib": [
+			"ES2022"
+		],
+		"types": [
+			"node"
+		],
+		"paths": {
+			"@mariozechner/pi-coding-agent": [
+				"./node_modules/@earendil-works/pi-coding-agent/dist/index.d.ts"
+			],
+			"@mariozechner/pi-tui": [
+				"./node_modules/@earendil-works/pi-tui/dist/index.d.ts"
+			]
+		},
+		"allowImportingTsExtensions": true
+	},
+	"include": [
+		"src/**/*.ts",
+		"test/**/*.ts"
+	]
+}

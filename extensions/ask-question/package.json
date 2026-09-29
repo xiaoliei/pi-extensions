@@ -1,0 +1,42 @@
+{
+	"name": "@xiaoliyo/pi-ask-question",
+	"version": "0.1.0",
+	"description": "ask_question tool for the pi coding agent: lets the LLM ask the user to clarify requirements or make choices, with single/multi-choice, free-text, and multi-question dialogs",
+	"license": "MIT",
+	"type": "module",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/xiaoliei/pi-extensions.git",
+		"directory": "extensions/ask-question"
+	},
+	"keywords": [
+		"pi",
+		"pi-extension",
+		"coding-agent",
+		"ask",
+		"clarify"
+	],
+	"files": [
+		"src",
+		"README.md"
+	],
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"scripts": {
+		"test": "vitest --run",
+		"check": "tsc --noEmit"
+	},
+	"pi": {
+		"extensions": ["./src/index.ts"]
+	},
+	"devDependencies": {
+		"@earendil-works/pi-ai": "0.87.1",
+		"@earendil-works/pi-coding-agent": "0.87.1",
+		"@earendil-works/pi-tui": "0.87.1",
+		"@types/node": "24.12.4",
+		"typescript": "5.9.3",
+		"typebox": "1.3.27",
+		"vitest": "4.1.9"
+	}
+}

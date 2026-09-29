@@ -1,0 +1,99 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*-v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+          cache-dependency-path: extensions/packaged-ext/package-lock.json
+
+      - name: Parse and validate tag
+        id: tag
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          name="${TAG%-v*}"
+          version="${TAG#*-v}"
+
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::Tag '$TAG' does not follow <extension>-v<semver> (e.g. ask-question-v0.1.0)."
+            exit 1
+          fi
+
+          if ! node scripts/discover-extensions.mjs --check "$name"; then
+            echo "::error::No extension directory '$name'. Available tags: <extension>-v<semver> for each directory under extensions/."
+            exit 1
+          fi
+
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "dir=extensions/$name" >> "$GITHUB_OUTPUT"
+
+      - name: Test
+        working-directory: ${{ steps.tag.outputs.dir }}
+        run: |
+          npm ci --ignore-scripts
+          npm test
+          npm run check
+
+      - name: Stamp version from tag
+        working-directory: ${{ steps.tag.outputs.dir }}
+        run: npm version "${{ steps.tag.outputs.version }}" --no-git-tag-version --allow-same-version
+
+      - name: Check if already published
+        id: published
+        env:
+          PKG_NAME: ${{ format('{0}', steps.tag.outputs.name) }}
+        run: |
+          # Name in package.json is scoped; resolve from the actual manifest.
+          name=$(node -p "require('./${{ steps.tag.outputs.dir }}/package.json').name")
+          echo "name=$name" >> "$GITHUB_OUTPUT"
+          if npm view "$name@${{ steps.tag.outputs.version }}" version >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "$name@${{ steps.tag.outputs.version }} is already on npm; skipping publish."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish
+        if: steps.published.outputs.exists == 'false'
+        working-directory: ${{ steps.tag.outputs.dir }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: npm publish --access public --ignore-scripts
+
+      - name: Create GitHub release
+        if: steps.published.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          NAME: ${{ steps.published.outputs.name }}
+          VERSION: ${{ steps.tag.outputs.version }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" --verify-tag --title "$NAME@$VERSION" \
+            --notes "npm: \`npm install -g $NAME@$VERSION\` or add \`npm:$NAME\` as a pi package (version $VERSION)."

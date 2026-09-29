@@ -1,0 +1,40 @@
+{
+	"name": "@xiaoliyo/pi-plan-mode",
+	"version": "0.1.0",
+	"description": "Read-only planning workflow for the pi coding agent: /plan blocks writes, guides design refinement, and offers one-click execution of the proposed plan",
+	"license": "MIT",
+	"type": "module",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/xiaoliei/pi-extensions.git",
+		"directory": "extensions/plan-mode"
+	},
+	"keywords": [
+		"pi",
+		"pi-extension",
+		"coding-agent",
+		"planning",
+		"read-only"
+	],
+	"files": [
+		"src",
+		"README.md"
+	],
+	"engines": {
+		"node": ">=22.19.0"
+	},
+	"scripts": {
+		"test": "vitest --run",
+		"check": "tsc --noEmit"
+	},
+	"pi": {
+		"extensions": ["./src/index.ts"]
+	},
+	"devDependencies": {
+		"@earendil-works/pi-coding-agent": "0.87.1",
+		"@earendil-works/pi-tui": "0.87.1",
+		"@types/node": "24.12.4",
+		"typescript": "5.9.3",
+		"vitest": "4.1.9"
+	}
+}
