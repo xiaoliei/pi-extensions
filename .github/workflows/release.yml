@@ -26,8 +26,6 @@ jobs:
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
-          cache: npm
-          cache-dependency-path: extensions/packaged-ext/package-lock.json
 
       - name: Parse and validate tag
         id: tag
@@ -59,7 +57,6 @@ jobs:
           npm ci --ignore-scripts
           npm test
           npm run check
-
       - name: Stamp version from tag
         working-directory: ${{ steps.tag.outputs.dir }}
         run: npm version "${{ steps.tag.outputs.version }}" --no-git-tag-version --allow-same-version
