@@ -127,23 +127,25 @@ describe("third-party tool discovery", () => {
 		expect(isThirdPartySubagentTool({ name: "write", description: "Write files", sourceInfo })).toBe(false);
 		expect(isThirdPartySubagentTool({ name: "delegate_research", description: "Delegate tasks to specialized subagents" })).toBe(false);
 	});
-	it("accepts verified pi-lens query tools only", () => {
+	it("accepts every tool from the pi-lens source", () => {
 		const lens = { source: "npm:pi-lens", path: "/npm/pi-lens/index.js" };
 		expect(isPiLensQueryTool({ name: "lens_diagnostics", sourceInfo: lens })).toBe(true);
 		expect(isPiLensQueryTool({ name: "lsp_navigation", sourceInfo: lens })).toBe(true);
-		expect(isPiLensQueryTool({ name: "lens_diagnostic_mark", sourceInfo: lens })).toBe(false);
-		expect(isPiLensQueryTool({ name: "ast_grep_replace", sourceInfo: lens })).toBe(false);
+		expect(isPiLensQueryTool({ name: "lens_diagnostic_mark", sourceInfo: lens })).toBe(true);
+		expect(isPiLensQueryTool({ name: "ast_grep_replace", sourceInfo: lens })).toBe(true);
+		expect(isPiLensQueryTool({ name: "future_lens_tool", sourceInfo: lens })).toBe(true);
 		expect(isPiLensQueryTool({ name: "lsp_navigation", sourceInfo })).toBe(false);
 	});
-	it("permits LSP queries and blocks mutations or unknown operations", () => {
-		expect(isAllowedPiLensCall("pi_lens_activate_tools", { tools: ["lsp_navigation", "ast_grep_search"] })).toBe(true);
+	it("permits read-only pi-lens calls and blocks write operations", () => {
+		expect(isAllowedPiLensCall("pi_lens_activate_tools", { tools: ["module_report", "lsp_navigation"] })).toBe(true);
 		expect(isAllowedPiLensCall("pi_lens_activate_tools", { tools: ["ast_grep_replace"] })).toBe(false);
 		for (const operation of ["definition", "references", "codeAction", "workspaceDiagnostics"]) {
 			expect(isAllowedPiLensCall("lsp_navigation", { operation })).toBe(true);
 		}
-		for (const operation of ["rename", "rename_file", "executeCommand", "unknown"]) {
+		for (const operation of ["rename", "rename_file", "executeCommand"]) {
 			expect(isAllowedPiLensCall("lsp_navigation", { operation })).toBe(false);
 		}
+		expect(isAllowedPiLensCall("lsp_navigation", { operation: "unknown" })).toBe(false);
 		expect(isAllowedPiLensCall("lsp_navigation", { operation: "codeAction", apply: true })).toBe(false);
 		expect(isAllowedPiLensCall("lsp_navigation", {})).toBe(false);
 	});

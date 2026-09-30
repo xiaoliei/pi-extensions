@@ -145,10 +145,11 @@ describe("plan-mode extension factory", () => {
 		expect(ctx.status.at(-1)).toEqual(["plan-mode", "plan mode"]);
 	});
 
-	it("discovers pi-lens query tools and blocks write operations at call time", async () => {
+	it("discovers read-only pi-lens tools and blocks writes", async () => {
 		const pi = makeStubPi([
 			{ name: "lsp_navigation", sourceInfo: LENS_SOURCE },
 			{ name: "lens_diagnostics", sourceInfo: LENS_SOURCE },
+			{ name: "module_report", sourceInfo: LENS_SOURCE },
 			{ name: "ast_grep_replace", sourceInfo: LENS_SOURCE },
 			{ name: "lens_diagnostic_mark", sourceInfo: LENS_SOURCE },
 		]);
@@ -158,6 +159,7 @@ describe("plan-mode extension factory", () => {
 		const active = pi.calls.at(-1)?.setActiveTools ?? [];
 		expect(active).toContain("lsp_navigation");
 		expect(active).toContain("lens_diagnostics");
+		expect(active).toContain("module_report");
 		expect(active).not.toContain("ast_grep_replace");
 		const call = pi.events.get("tool_call")!;
 		expect(await call({ toolName: "lsp_navigation", input: { operation: "references" } }, ctx)).toBeUndefined();

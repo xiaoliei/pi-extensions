@@ -14,21 +14,17 @@ export const EXTRA_READONLY_TOOLS: readonly string[] = [
 
 export const PLAN_WHITELIST: readonly string[] = [...CORE_READONLY_TOOLS, ...EXTRA_READONLY_TOOLS];
 
-// These pi-lens tools have been reviewed against the installed 4.3.0 tool contract.
-const PI_LENS_QUERY_TOOLS = new Set([
-	"pi_lens_activate_tools",
-	"lens_diagnostics",
-	"lsp_navigation",
-	"symbol_search",
-	"module_report",
-	"read_symbol",
-	"read_enclosing",
-	"project_report",
-	"ast_grep_search",
-	"ast_grep_outline",
-]);
+// Include the current pi-lens names even when a situational registration is
+// temporarily absent from getAllTools(); pi ignores names that are not loaded.
+export const KNOWN_PI_LENS_TOOLS: readonly string[] = [
+	"pi_lens_activate_tools", "lens_diagnostics", "lsp_navigation", "symbol_search",
+	"module_report", "read_symbol", "read_enclosing", "project_report", "ast_grep_search",
+	"ast_grep_outline", "ast_grep_replace", "lens_diagnostic_mark",
+];
 
-const LSP_QUERY_OPERATIONS = new Set([
+const PI_LENS_WRITE_TOOLS = new Set(["ast_grep_replace", "lens_diagnostic_mark"]);
+const PI_LENS_WRITE_OPERATIONS = new Set(["rename", "rename_file", "executeCommand"]);
+const PI_LENS_READ_OPERATIONS = new Set([
 	"definition", "typeDefinition", "declaration", "references", "hover", "signatureHelp",
 	"documentSymbol", "findSymbol", "workspaceSymbol", "codeAction", "implementation",
 	"prepareCallHierarchy", "incomingCalls", "outgoingCalls", "workspaceDiagnostics", "capabilities",
@@ -59,7 +55,12 @@ export function isReadOnlySubagentRequest(input: unknown): boolean {
 
 export function isPiLensQueryTool(tool: AvailableTool): boolean {
 	const source = `${tool.sourceInfo?.source ?? ""} ${tool.sourceInfo?.path ?? ""}`;
-	return PI_LENS_QUERY_TOOLS.has(tool.name) && /(?:^|[\\/\s:@])pi-lens(?:[\\/\s@]|$)/i.test(source);
+	return /(?:^|[\\/\s:@])pi-lens(?:[\\/\s@]|$)/i.test(source);
+}
+
+export function isPiLensWritableTool(tool: AvailableTool): boolean {
+	const source = `${tool.sourceInfo?.source ?? ""} ${tool.sourceInfo?.path ?? ""}`;
+	return /(?:^|[\\/\s:@])pi-lens(?:[\\/\s@]|$)/i.test(source) && PI_LENS_WRITE_TOOLS.has(tool.name);
 }
 
 export function isThirdPartySubagentTool(tool: AvailableTool): boolean {
@@ -75,17 +76,19 @@ export function isThirdPartySubagentTool(tool: AvailableTool): boolean {
 }
 
 export function isAllowedPiLensCall(name: string, input: unknown): boolean {
+	if (PI_LENS_WRITE_TOOLS.has(name)) return false;
 	if (name === "pi_lens_activate_tools") {
 		if (typeof input !== "object" || input === null) return false;
 		const tools = (input as { tools?: unknown }).tools;
 		return Array.isArray(tools) && tools.length > 0 && tools.every(
-			(tool) => tool === "lsp_navigation" || tool === "ast_grep_search" || tool === "ast_grep_outline",
+			(tool) => typeof tool === "string" && !PI_LENS_WRITE_TOOLS.has(tool),
 		);
 	}
 	if (name !== "lsp_navigation") return true;
 	if (typeof input !== "object" || input === null) return false;
 	const { operation, apply } = input as { operation?: unknown; apply?: unknown };
-	return typeof operation === "string" && LSP_QUERY_OPERATIONS.has(operation) && apply !== true;
+	return typeof operation === "string" && PI_LENS_READ_OPERATIONS.has(operation)
+		&& !PI_LENS_WRITE_OPERATIONS.has(operation) && apply !== true;
 }
 
 // Destructive patterns: any hit blocks the command regardless of prefix.

@@ -17,8 +17,8 @@ import { Key } from "@mariozechner/pi-tui";
 import { join } from "node:path";
 import { extractProposedPlan } from "./plan-detect.ts";
 import {
-	isAllowedPiLensCall, isLikelyReadOnlyTool, isPiLensQueryTool, isReadOnlySubagentRequest,
-	isSafeCommand, isThirdPartySubagentTool, PLAN_WHITELIST, toolExtensionKey, type AvailableTool,
+	isAllowedPiLensCall, isLikelyReadOnlyTool, isPiLensQueryTool, isPiLensWritableTool, isReadOnlySubagentRequest,
+	isSafeCommand, isThirdPartySubagentTool, KNOWN_PI_LENS_TOOLS, PLAN_WHITELIST, toolExtensionKey, type AvailableTool,
 } from "./policy.ts";
 import { buildPlanModePrompt } from "./prompt.ts";
 import { createTrustStore, type ExtensionTrustScope } from "./trust.ts";
@@ -51,8 +51,9 @@ export default function planModeExtension(
 	function planToolNames(): string[] {
 		return [...new Set([
 			...PLAN_WHITELIST,
+			...KNOWN_PI_LENS_TOOLS.filter((name) => name !== "ast_grep_replace" && name !== "lens_diagnostic_mark"),
 			...pi.getAllTools()
-				.filter((tool) => isPiLensQueryTool(tool) || isThirdPartySubagentTool(tool))
+				.filter((tool) => (isPiLensQueryTool(tool) && !isPiLensWritableTool(tool)) || isThirdPartySubagentTool(tool))
 				.map((tool) => tool.name),
 		])];
 	}
@@ -175,6 +176,7 @@ export default function planModeExtension(
 		if (!planModeEnabled) return;
 		const tool = availableTool(event.toolName);
 		const isPiLens = tool !== undefined && isPiLensQueryTool(tool);
+		const isPiLensWritable = tool !== undefined && isPiLensWritableTool(tool);
 		const isSubagent = tool !== undefined && isThirdPartySubagentTool(tool);
 		const extensionScope = tool ? await trustStore.getScope(tool) : undefined;
 		const globallyAllowed = tool !== undefined && extensionScope === "all";
@@ -196,7 +198,7 @@ export default function planModeExtension(
 			}
 		}
 
-		if (isPiLens && !isAllowedPiLensCall(event.toolName, event.input)) {
+		if (isPiLens && (isPiLensWritable || !isAllowedPiLensCall(event.toolName, event.input))) {
 			return {
 				block: true,
 				reason: "Plan mode allows pi-lens navigation queries only; mutation operations and apply:true are blocked.",

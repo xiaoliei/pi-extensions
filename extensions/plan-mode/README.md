@@ -16,15 +16,15 @@ Compatible with both original pi (`@earendil-works`) and the customized fork (`@
 - Read-only built-in tools: `read`, `grep`, `find`, `ls`, `bash` (read-only command allowlist)
 - Question tools: `ask_question` (from `@xiaoliyo/pi-ask-question`), `question`, `questionnaire`
 - Installed third-party subagent tools discovered from pi's current tool catalog, after one TUI consent dialog that lists the extension's available tools. The dialog can remember all read-only tools from that extension or all tools from that extension, including write tools.
-- Verified pi-lens query tools, including `lens_diagnostics` and query operations of `lsp_navigation`
+- Read-only tools exposed by the trusted `pi-lens` extension, including `module_report`, `project_report`, `symbol_search`, `read_symbol`, `read_enclosing`, `lens_diagnostics`, and LSP query operations
 
-Everything else is hidden via `setActiveTools` and blocked in `tool_call` (including write-capable tools activated later by other extensions). `lsp_navigation` blocks rename, rename-file, execute-command, and `apply: true`; code replacement and diagnostic marking remain unavailable.
+Everything else is hidden via `setActiveTools` and blocked in `tool_call` (including tools activated later by other extensions). Pi-lens write tools and LSP mutations are blocked.
 
 Third-party subagent consent displays the tool, source, selected mode, every discovered tool from that extension, and each tool's possible write-access risk. Noninteractive calls without prior global consent are blocked. The trust record is stored under the global pi agent directory. Subagent work runs concurrently only when the third-party tool supports parallel calls or batch tasks.
 
 ## Extending the whitelist
 
-Review the tool's behavior and add verified query tools to the pi-lens allowlist in `src/policy.ts`. New LSP tools are blocked until reviewed.
+Pi-lens read-only tools are discovered by extension source; write tools remain explicitly blocked.
 
 ## Bash command filtering
 
