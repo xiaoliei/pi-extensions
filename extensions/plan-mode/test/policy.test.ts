@@ -122,6 +122,8 @@ describe("third-party tool discovery", () => {
 	const sourceInfo = { source: "npm:other-agents", path: "/extensions/other-agents/index.ts" };
 	it("discovers agents from current tool metadata, not a legacy tool name", () => {
 		expect(isThirdPartySubagentTool({ name: "delegate_research", description: "Delegate tasks to specialized subagents", sourceInfo })).toBe(true);
+		expect(isThirdPartySubagentTool({ name: "research_dispatch", description: "Run independent repository research in parallel", sourceInfo })).toBe(true);
+		expect(isThirdPartySubagentTool({ name: "run_unit", description: "Explore a repository using a read-only worker agent", sourceInfo })).toBe(true);
 		expect(isThirdPartySubagentTool({ name: "write", description: "Write files", sourceInfo })).toBe(false);
 		expect(isThirdPartySubagentTool({ name: "delegate_research", description: "Delegate tasks to specialized subagents" })).toBe(false);
 	});
@@ -134,6 +136,8 @@ describe("third-party tool discovery", () => {
 		expect(isPiLensQueryTool({ name: "lsp_navigation", sourceInfo })).toBe(false);
 	});
 	it("permits LSP queries and blocks mutations or unknown operations", () => {
+		expect(isAllowedPiLensCall("pi_lens_activate_tools", { tools: ["lsp_navigation", "ast_grep_search"] })).toBe(true);
+		expect(isAllowedPiLensCall("pi_lens_activate_tools", { tools: ["ast_grep_replace"] })).toBe(false);
 		for (const operation of ["definition", "references", "codeAction", "workspaceDiagnostics"]) {
 			expect(isAllowedPiLensCall("lsp_navigation", { operation })).toBe(true);
 		}

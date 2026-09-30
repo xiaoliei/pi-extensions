@@ -213,12 +213,13 @@ export default function planModeExtension(
 
 		const hasAskQuestion = pi.getAllTools().some((tool) => tool.name === "ask_question");
 		const hasLspTools = pi.getAllTools().some((tool) =>
-			isPiLensQueryTool(tool) && (tool.name === "lsp_navigation" || tool.name === "lens_diagnostics"),
+			isPiLensQueryTool(tool) && (tool.name === "pi_lens_activate_tools" || tool.name === "lsp_navigation" || tool.name === "lens_diagnostics"),
 		);
+		const hasSubagentTools = pi.getAllTools().some((tool) => isThirdPartySubagentTool(tool));
 		return {
 			message: {
 				customType: "plan-mode-context",
-				content: buildPlanModePrompt(hasAskQuestion, hasLspTools),
+				content: buildPlanModePrompt(hasAskQuestion, hasLspTools, hasSubagentTools),
 				display: false,
 			},
 		};

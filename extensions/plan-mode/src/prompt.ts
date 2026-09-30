@@ -1,11 +1,14 @@
 /** Model-facing planning instructions, injected on every planning turn. */
-export function buildPlanModePrompt(hasAskQuestion: boolean, hasLspTools = false): string {
+export function buildPlanModePrompt(hasAskQuestion: boolean, hasLspTools = false, hasSubagentTools = false): string {
 	const questionInstruction = hasAskQuestion
 		? "Use ask_question for material choices that cannot be resolved from the environment."
 		: "Ask material questions in text, offering 2–4 mutually exclusive choices and a recommended default.";
 	const lspInstruction = hasLspTools
-		? "LSP tools are installed and available. Use lsp_navigation and related read-only LSP tools first to map symbols, definitions, references, implementations, call relationships, and inferred types; use grep or AST search only to fill gaps."
-		: "If LSP navigation or diagnostics tools are installed, use them first for code structure, symbol relationships, and type information before broad text searches.";
+		? "LSP tools are installed and available. Start the research gate by calling pi_lens_activate_tools for lsp_navigation (and read-only diagnostics if needed), then use lsp_navigation and related read-only LSP tools to map symbols, definitions, references, implementations, call relationships, and inferred types; use grep or AST search only to fill gaps."
+		: "If LSP navigation or diagnostics tools are installed, activate them first with pi_lens_activate_tools and use them for code structure, symbol relationships, and type information before broad text searches.";
+	const subagentAvailability = hasSubagentTools
+		? "Third-party subagent capability is installed. Select the discovered tool and its advertised Explore/read-only mode or template for the required research gate; do not assume a fixed tool name or input schema."
+		: "If a third-party subagent tool is present in the tool list, use it for the required research gate; otherwise record that no such tool is installed.";
 
 	return `You are in plan mode until the user explicitly exits it. Treat requests to implement as requests to plan the implementation.
 
@@ -17,7 +20,7 @@ Inspect the relevant repository, entry points, interfaces, tests, and current be
 
 First determine whether LSP navigation or diagnostics tools are installed. ${lspInstruction} Use available read-only pi-lens tools for code navigation and diagnostics before broad text searches. In plan mode, do not rename symbols or files, execute language-server commands, apply code actions, replace code, or mark diagnostics. Treat an unfamiliar tool or operation as unavailable until its read-only behavior has been verified.
 
-After the initial LSP pass, inspect the available third-party subagent tools and use the LSP findings to split the remaining investigation into independent areas. Prefer an Explore or read-only mode or template. If one is available, delegate repository exploration before doing a long serial investigation yourself. Launch those independent calls concurrently in one tool turn whenever the tool supports parallel calls or batch tasks. If no read-only mode or template exists, use an ordinary mode or template only with an explicit instruction to call read-related tools exclusively and make no changes. Report the tool and mode used, possible write access, and any concurrency limitation. Do not duplicate a subagent's exploration in the parent turn while it is running.
+After the initial LSP pass, inspect the available third-party subagent tools by their current metadata (names, descriptions, schemas, and extension source) and use the LSP findings to split the remaining investigation into independent areas. ${subagentAvailability} Prefer an Explore or read-only mode or template. For any non-trivial task (more than one relevant file, an unknown call path, or a symbol/type relationship), this is a required research gate: launch at least one read-only subagent before proposing a plan, and launch multiple independent agents in one tool turn when the tool supports batching or parallel calls. If no read-only mode or template exists, use an ordinary mode or template only with an explicit instruction to call read-related tools exclusively and make no changes. Do not produce <proposed_plan> until the required LSP pass and subagent results have been received, or you have stated that the relevant tool is not installed or was blocked. Report the actual tool name, mode, source, possible write access, and any concurrency limitation. Do not duplicate a subagent's exploration in the parent turn while it is running.
 
 Suggested research task:
 Explore [topic] at [location] — search breadth: [scope]. I'm planning work for [goal]. Report findings with exact file paths and line numbers: [questions]. Return a structured report. Do NOT propose designs — just report what exists.

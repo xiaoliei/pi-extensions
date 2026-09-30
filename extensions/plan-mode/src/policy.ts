@@ -16,6 +16,7 @@ export const PLAN_WHITELIST: readonly string[] = [...CORE_READONLY_TOOLS, ...EXT
 
 // These pi-lens tools have been reviewed against the installed 4.3.0 tool contract.
 const PI_LENS_QUERY_TOOLS = new Set([
+	"pi_lens_activate_tools",
 	"lens_diagnostics",
 	"lsp_navigation",
 	"symbol_search",
@@ -64,10 +65,23 @@ export function isPiLensQueryTool(tool: AvailableTool): boolean {
 export function isThirdPartySubagentTool(tool: AvailableTool): boolean {
 	if (!tool.sourceInfo?.path || !tool.sourceInfo.source) return false;
 	const text = `${tool.name} ${tool.description ?? ""}`;
-	return /sub[ -]?agent|delegate.{0,60}(?:agent|task)|(?:spawn|launch|run).{0,60}agent/i.test(text);
+	const source = `${tool.sourceInfo.source} ${tool.sourceInfo.path}`;
+	// Tool names and input schemas are extension-defined. Classify from the
+	// advertised capability and source metadata instead of a fixed field list.
+	const mentionsSubagent = /sub[ -]?agent|agent orchestrat|agent delegation|agent runner|agent manager/i.test(`${text} ${source}`);
+	const mentionsDelegation = /delegat|(?:spawn|launch|dispatch).{0,40}(?:agent|task|worker|research|explor)|(?:agent|task|worker|research|explor).{0,40}(?:spawn|launch|dispatch)|parallel.{0,30}(?:task|research|agent)|background.{0,30}(?:task|agent)/i.test(text);
+	const mentionsResearchAgent = /(?:explor|research|worker).{0,60}agent|agent.{0,60}(?:explor|research|worker)/i.test(text);
+	return mentionsSubagent || mentionsDelegation || mentionsResearchAgent;
 }
 
 export function isAllowedPiLensCall(name: string, input: unknown): boolean {
+	if (name === "pi_lens_activate_tools") {
+		if (typeof input !== "object" || input === null) return false;
+		const tools = (input as { tools?: unknown }).tools;
+		return Array.isArray(tools) && tools.length > 0 && tools.every(
+			(tool) => tool === "lsp_navigation" || tool === "ast_grep_search" || tool === "ast_grep_outline",
+		);
+	}
 	if (name !== "lsp_navigation") return true;
 	if (typeof input !== "object" || input === null) return false;
 	const { operation, apply } = input as { operation?: unknown; apply?: unknown };
