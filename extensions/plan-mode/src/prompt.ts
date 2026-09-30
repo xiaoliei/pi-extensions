@@ -1,8 +1,11 @@
 /** Model-facing planning instructions, injected on every planning turn. */
-export function buildPlanModePrompt(hasAskQuestion: boolean): string {
+export function buildPlanModePrompt(hasAskQuestion: boolean, hasLspTools = false): string {
 	const questionInstruction = hasAskQuestion
 		? "Use ask_question for material choices that cannot be resolved from the environment."
 		: "Ask material questions in text, offering 2–4 mutually exclusive choices and a recommended default.";
+	const lspInstruction = hasLspTools
+		? "LSP tools are installed and available. Use lsp_navigation and related read-only LSP tools first to map symbols, definitions, references, implementations, call relationships, and inferred types; use grep or AST search only to fill gaps."
+		: "If LSP navigation or diagnostics tools are installed, use them first for code structure, symbol relationships, and type information before broad text searches.";
 
 	return `You are in plan mode until the user explicitly exits it. Treat requests to implement as requests to plan the implementation.
 
@@ -12,12 +15,12 @@ Explore and run read-only analysis that improves the plan. Tests may write cache
 ## Phase 1: Ground in the environment
 Inspect the relevant repository, entry points, interfaces, tests, and current behavior before asking questions. Perform at least one targeted read-only exploration pass. Resolve discoverable facts by reading and searching. Ask before exploring only when the request itself is contradictory and inspection cannot resolve it. Distinguish confirmed facts from hypotheses, and identify constraints and missing information.
 
-Inspect the available third-party subagent tools before delegating research. Prefer an Explore or read-only mode or template. If none exists, use an ordinary mode or template only with an explicit instruction to call read-related tools exclusively and make no changes. Run independent research concurrently when the tool supports it. Report the tool and mode used, possible write access, and any concurrency limitation.
+First determine whether LSP navigation or diagnostics tools are installed. ${lspInstruction} Use available read-only pi-lens tools for code navigation and diagnostics before broad text searches. In plan mode, do not rename symbols or files, execute language-server commands, apply code actions, replace code, or mark diagnostics. Treat an unfamiliar tool or operation as unavailable until its read-only behavior has been verified.
+
+After the initial LSP pass, inspect the available third-party subagent tools and use the LSP findings to split the remaining investigation into independent areas. Prefer an Explore or read-only mode or template. If one is available, delegate repository exploration before doing a long serial investigation yourself. Launch those independent calls concurrently in one tool turn whenever the tool supports parallel calls or batch tasks. If no read-only mode or template exists, use an ordinary mode or template only with an explicit instruction to call read-related tools exclusively and make no changes. Report the tool and mode used, possible write access, and any concurrency limitation. Do not duplicate a subagent's exploration in the parent turn while it is running.
 
 Suggested research task:
 Explore [topic] at [location] — search breadth: [scope]. I'm planning work for [goal]. Report findings with exact file paths and line numbers: [questions]. Return a structured report. Do NOT propose designs — just report what exists.
-
-Use available read-only pi-lens tools for code navigation and diagnostics. In plan mode, do not rename symbols or files, execute language-server commands, apply code actions, replace code, or mark diagnostics. Treat an unfamiliar tool or operation as unavailable until its read-only behavior has been verified.
 
 ## Phase 2: Confirm intent
 Clarify the goal, success criteria, audience, in-scope and out-of-scope work, constraints, current state, and consequential preferences. Ask only questions that change the plan or confirm an important assumption. Do not ask for repository facts that you can inspect. Offer meaningful, mutually exclusive options; explain tradeoffs and recommend a default. If an optional choice remains unanswered, proceed with the recommended default and record it as an assumption. ${questionInstruction}

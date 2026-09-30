@@ -13,4 +13,14 @@ describe("planning prompt", () => {
 			expect(prompt).toContain("exact file paths and line numbers");
 		}
 	});
+
+	it("prioritizes installed LSP tools for structure and type exploration", () => {
+		const prompt = buildPlanModePrompt(true, true);
+		expect(prompt).toContain("LSP tools are installed and available");
+		expect(prompt).toContain("map symbols, definitions, references, implementations");
+		expect(prompt).toContain("use grep or AST search only to fill gaps");
+		expect(prompt.indexOf("First determine whether LSP")).toBeLessThan(
+			prompt.indexOf("After the initial LSP pass, inspect the available third-party subagent tools"),
+		);
+	});
 });

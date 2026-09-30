@@ -2,13 +2,16 @@ import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { AvailableTool } from "./policy.ts";
 
+export type ExtensionTrustScope = "readonly" | "all";
+
 interface TrustFile {
-	version: 1;
-	allowed: string[];
+	version: 2;
+	readonlyExtensions: string[];
+	allExtensions: string[];
 }
 
-export function toolTrustKey(tool: AvailableTool): string {
-	return JSON.stringify([tool.name, tool.sourceInfo?.source, tool.sourceInfo?.path]);
+export function extensionTrustKey(tool: AvailableTool): string {
+	return tool.sourceInfo?.source || tool.sourceInfo?.path || tool.name;
 }
 
 export function createTrustStore(filePath: string) {
@@ -17,39 +20,53 @@ export function createTrustStore(filePath: string) {
 	async function load(): Promise<TrustFile> {
 		try {
 			const value: unknown = JSON.parse(await readFile(filePath, "utf8"));
-			if (
-				typeof value !== "object" || value === null ||
-				(value as TrustFile).version !== 1 ||
-				!Array.isArray((value as TrustFile).allowed) ||
-				!(value as TrustFile).allowed.every((item) => typeof item === "string")
-			) return { version: 1, allowed: [] };
-			return value as TrustFile;
+			if (typeof value !== "object" || value === null || (value as TrustFile).version !== 2) {
+				return { version: 2, readonlyExtensions: [], allExtensions: [] };
+			}
+			const candidate = value as Partial<TrustFile>;
+			if (!Array.isArray(candidate.readonlyExtensions) || !Array.isArray(candidate.allExtensions)) {
+				return { version: 2, readonlyExtensions: [], allExtensions: [] };
+			}
+			return {
+				version: 2,
+				readonlyExtensions: candidate.readonlyExtensions.filter((item): item is string => typeof item === "string"),
+				allExtensions: candidate.allExtensions.filter((item): item is string => typeof item === "string"),
+			};
 		} catch {
-			return { version: 1, allowed: [] };
+			return { version: 2, readonlyExtensions: [], allExtensions: [] };
 		}
 	}
 
+	async function update(extension: string, scope: ExtensionTrustScope): Promise<void> {
+		const write = pendingWrite.then(async () => {
+			const stored = await load();
+			const field = scope === "all" ? "allExtensions" : "readonlyExtensions";
+			if (stored[field].includes(extension)) return;
+			const next: TrustFile = { ...stored, [field]: [...stored[field], extension] };
+			const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
+			await mkdir(dirname(filePath), { recursive: true });
+			try {
+				await writeFile(tempPath, JSON.stringify(next, null, 2), { mode: 0o600 });
+				await rename(tempPath, filePath);
+			} finally {
+				await rm(tempPath, { force: true });
+			}
+		});
+		pendingWrite = write.catch(() => {});
+		await write;
+	}
+
 	return {
-		async isTrusted(tool: AvailableTool): Promise<boolean> {
+		async getScope(tool: AvailableTool): Promise<ExtensionTrustScope | undefined> {
 			await pendingWrite;
-			return (await load()).allowed.includes(toolTrustKey(tool));
+			const stored = await load();
+			const extension = extensionTrustKey(tool);
+			if (stored.allExtensions.includes(extension)) return "all";
+			if (stored.readonlyExtensions.includes(extension)) return "readonly";
+			return undefined;
 		},
-		async trust(tool: AvailableTool): Promise<void> {
-			const write = pendingWrite.then(async () => {
-				const stored = await load();
-				const key = toolTrustKey(tool);
-				if (stored.allowed.includes(key)) return;
-				const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`;
-				await mkdir(dirname(filePath), { recursive: true });
-				try {
-					await writeFile(tempPath, JSON.stringify({ version: 1, allowed: [...stored.allowed, key] }, null, 2), { mode: 0o600 });
-					await rename(tempPath, filePath);
-				} finally {
-					await rm(tempPath, { force: true });
-				}
-			});
-			pendingWrite = write.catch(() => {});
-			await write;
+		async trustExtension(tool: AvailableTool, scope: ExtensionTrustScope): Promise<void> {
+			await update(extensionTrustKey(tool), scope);
 		},
 	};
 }

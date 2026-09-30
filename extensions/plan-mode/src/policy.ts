@@ -39,6 +39,23 @@ export interface AvailableTool {
 	sourceInfo?: { path: string; source: string };
 }
 
+export function toolExtensionKey(tool: AvailableTool): string {
+	return tool.sourceInfo?.source || tool.sourceInfo?.path || tool.name;
+}
+
+export function isLikelyReadOnlyTool(tool: AvailableTool): boolean {
+	if (PLAN_WHITELIST.includes(tool.name) || isPiLensQueryTool(tool)) return true;
+	const text = `${tool.name} ${tool.description ?? ""}`;
+	return /(?:read|list|search|find|grep|inspect|explor|diagnos|navigat|symbol|report|query|lookup|discover|hover|definition|reference)/i.test(text)
+		&& !/(?:write|edit|replace|rename|delete|remove|apply|execute|command|create|update|mark|suppress|fix)/i.test(text);
+}
+
+export function isReadOnlySubagentRequest(input: unknown): boolean {
+	if (typeof input !== "object" || input === null) return false;
+	const values = Object.values(input as Record<string, unknown>).filter((value): value is string => typeof value === "string");
+	return /(?:read[- ]?only|explor|inspect|research|navigation|diagnos|no changes|do not (?:edit|write|modify))/i.test(values.join(" "));
+}
+
 export function isPiLensQueryTool(tool: AvailableTool): boolean {
 	const source = `${tool.sourceInfo?.source ?? ""} ${tool.sourceInfo?.path ?? ""}`;
 	return PI_LENS_QUERY_TOOLS.has(tool.name) && /(?:^|[\\/\s:@])pi-lens(?:[\\/\s@]|$)/i.test(source);

@@ -172,17 +172,17 @@ describe("plan-mode extension factory", () => {
 		try {
 			const pi = makeStubPi([AGENT_TOOL]);
 			install(pi, filePath);
-			const ctx = makeStubCtx("全局记住此工具");
+			const ctx = makeStubCtx("全局同意该扩展的所有只读工具调用");
 			await runCommand(pi, "plan", ctx);
 			expect(pi.calls.at(-1)?.setActiveTools).toContain(AGENT_TOOL.name);
 			const call = pi.events.get("tool_call")!;
 			expect(await call({ toolName: AGENT_TOOL.name, input: { mode: "general", prompt: "read only" } }, ctx)).toBeUndefined();
 			expect(ctx.selects).toHaveLength(1);
-			expect(ctx.selects[0]).toEqual(["仅本次允许", "全局记住此工具", "拒绝"]);
+			expect(ctx.selects[0]).toEqual(["仅本次允许", "全局同意该扩展的所有只读工具调用", "全局同意该扩展的所有工具调用（包括写入工具）", "拒绝"]);
 			const anotherPi = makeStubPi([AGENT_TOOL]);
 			install(anotherPi, filePath);
 			await runCommand(anotherPi, "plan", ctx);
-			expect(await anotherPi.events.get("tool_call")!({ toolName: AGENT_TOOL.name, input: {} }, ctx)).toBeUndefined();
+			expect(await anotherPi.events.get("tool_call")!({ toolName: AGENT_TOOL.name, input: { prompt: "read-only exploration; no changes" } }, ctx)).toBeUndefined();
 			expect(ctx.selects).toHaveLength(1);
 			const changed = { ...AGENT_TOOL, sourceInfo: { ...AGENT_TOOL.sourceInfo, path: "/new-source/index.ts" } };
 			const changedPi = makeStubPi([changed]);
@@ -190,6 +190,23 @@ describe("plan-mode extension factory", () => {
 			await runCommand(changedPi, "plan", ctx);
 			const noUi = { ...ctx, hasUI: false };
 			expect((await changedPi.events.get("tool_call")!({ toolName: changed.name, input: {} }, noUi) as { block: boolean }).block).toBe(true);
+		} finally {
+			await rm(filePath, { force: true });
+		}
+	});
+
+	it("can globally trust every tool from an extension, including write tools", async () => {
+		const writeTool = { name: "agent_write", description: "Write files for delegated tasks", sourceInfo: AGENT_TOOL.sourceInfo };
+		const pi = makeStubPi([AGENT_TOOL, writeTool]);
+		const filePath = join(tmpdir(), `plan-mode-all-${randomUUID()}.json`);
+		try {
+			install(pi, filePath);
+			const ctx = makeStubCtx("全局同意该扩展的所有工具调用（包括写入工具）");
+			await runCommand(pi, "plan", ctx);
+			const call = pi.events.get("tool_call")!;
+			expect(await call({ toolName: AGENT_TOOL.name, input: { prompt: "read only" } }, ctx)).toBeUndefined();
+			expect(pi.calls.at(-1)?.setActiveTools).toContain(writeTool.name);
+			expect(await call({ toolName: writeTool.name, input: { path: "x" } }, ctx)).toBeUndefined();
 		} finally {
 			await rm(filePath, { force: true });
 		}
