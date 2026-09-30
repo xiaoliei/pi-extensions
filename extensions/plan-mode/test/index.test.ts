@@ -7,6 +7,10 @@
  */
 
 import { describe, expect, it } from "vitest";
+import { randomUUID } from "node:crypto";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { rm } from "node:fs/promises";
 import planModeExtension from "../src/index.ts";
 
 type Handler = (event: unknown, ctx: unknown) => unknown;
@@ -17,7 +21,10 @@ function assistantMsg(text: string) {
 	return { role: "assistant", content: [{ type: "text", text }] };
 }
 
-function makeStubPi(selectResult?: string) {
+const AGENT_TOOL = { name: "delegate_research", description: "Delegate tasks to specialized subagents", sourceInfo: { source: "npm:agent-tool", path: "/agent-tool/index.ts" } };
+const LENS_SOURCE = { source: "npm:pi-lens", path: "/pi-lens/index.js" };
+
+function makeStubPi(tools: Array<{ name: string; description?: string; sourceInfo?: { source: string; path: string } }> = []) {
 	const commandHandlers = new Map<string, (args: unknown, ctx: unknown) => void | Promise<void>>();
 	const events = new Map<string, Handler>();
 	const calls: { setActiveTools?: string[]; sendUserMessage?: [string, unknown] }[] = [];
@@ -31,20 +38,21 @@ function makeStubPi(selectResult?: string) {
 		on: (event: string, handler: Handler) => void events.set(event, handler),
 		getActiveTools: () => ["read", "edit", "write", "bash"],
 		setActiveTools: (tools: string[]) => void calls.push({ setActiveTools: tools }),
-		getAllTools: () => [{ name: "read" }, { name: "bash" }],
+		getAllTools: () => [{ name: "read" }, { name: "bash" }, ...tools],
 		getFlag: () => false,
 		appendEntry: () => {},
 		sendUserMessage: (content: string, options?: unknown) => void calls.push({ sendUserMessage: [content, options] }),
-		selectResult,
 	};
 }
 
 function makeStubCtx(selectResult?: string) {
 	const status: [string, string][] = [];
 	const selects: string[][] = [];
+	const editorTexts: string[] = [];
 	return {
 		ui: {
 			setStatus: (id: string, text: string) => void status.push([id, text]),
+			setEditorText: (text: string) => void editorTexts.push(text),
 			notify: () => {},
 			select: async (_title: string, options: string[]) => {
 				selects.push(options);
@@ -53,6 +61,7 @@ function makeStubCtx(selectResult?: string) {
 		},
 		status,
 		selects,
+		editorTexts,
 		mode: "tui" as const,
 		hasUI: true,
 		hasPendingMessages: () => false,
@@ -60,13 +69,18 @@ function makeStubCtx(selectResult?: string) {
 	};
 }
 
-const runCommand = (pi: ReturnType<typeof makeStubPi>, name: string, ctx: unknown) =>
-	pi.commandHandlers.get(name)?.(undefined, ctx);
+const runCommand = (pi: ReturnType<typeof makeStubPi>, name: string, ctx: unknown, args = "") =>
+	pi.commandHandlers.get(name)?.(args, ctx);
+
+function install(pi: ReturnType<typeof makeStubPi>, filePath = join(tmpdir(), `plan-mode-test-${randomUUID()}.json`)) {
+	planModeExtension(pi as never, filePath);
+	return filePath;
+}
 
 describe("plan-mode extension factory", () => {
 	it("registers command, flag, shortcut, and event handlers", () => {
 		const pi = makeStubPi();
-		expect(() => planModeExtension(pi as never)).not.toThrow();
+		expect(() => install(pi)).not.toThrow();
 		expect([...pi.commandHandlers.keys()]).toEqual(["plan"]);
 		for (const event of ["tool_call", "before_agent_start", "context", "session_start", "agent_end"]) {
 			expect(pi.events.has(event), event).toBe(true);
@@ -75,7 +89,7 @@ describe("plan-mode extension factory", () => {
 
 	it("/plan toggles the whitelist and tool_call guard", async () => {
 		const pi = makeStubPi();
-		planModeExtension(pi as never);
+		install(pi);
 		const ctx = makeStubCtx();
 		const toolCallHandler = pi.events.get("tool_call");
 		if (!toolCallHandler) throw new Error("tool_call handler missing");
@@ -101,15 +115,115 @@ describe("plan-mode extension factory", () => {
 		};
 		expect(blockedBash?.block).toBe(true);
 		expect(await toolCallHandler({ toolName: "bash", input: { command: "ls -la" } }, ctx)).toBeUndefined();
-		const blockedSubagent = (await toolCallHandler(
-			{ toolName: "subagent", input: { agent: "general", task: "x" } },
-			ctx,
-		)) as { block: boolean };
-		expect(blockedSubagent?.block).toBe(true);
 
 		// Exit plan mode: writes pass again
 		await runCommand(pi, "plan", ctx);
 		expect(await toolCallHandler({ toolName: "write", input: {} }, ctx)).toBeUndefined();
+	});
+
+	it("/plan with a task enables planning and starts a turn without toggling it off", async () => {
+		const pi = makeStubPi();
+		install(pi);
+		const ctx = makeStubCtx();
+		await runCommand(pi, "plan", ctx, "  inspect auth  ");
+		expect(ctx.status.at(-1)).toEqual(["plan-mode", "plan mode"]);
+		expect(pi.calls.at(-1)?.sendUserMessage?.[0]).toBe("inspect auth");
+		await runCommand(pi, "plan", ctx, "inspect routing");
+		expect(ctx.status.at(-1)).toEqual(["plan-mode", "plan mode"]);
+		expect(pi.calls.at(-1)?.sendUserMessage?.[0]).toBe("inspect routing");
+		await runCommand(pi, "plan", ctx, "   ");
+		expect(ctx.status.at(-1)).toEqual(["plan-mode", undefined]);
+	});
+
+	it("restores the planning command in the editor if sending fails", async () => {
+		const pi = makeStubPi();
+		pi.sendUserMessage = () => { throw new Error("send failed"); };
+		install(pi);
+		const ctx = makeStubCtx();
+		await expect(runCommand(pi, "plan", ctx, "inspect auth")).rejects.toThrow("send failed");
+		expect(ctx.editorTexts).toEqual(["/plan inspect auth"]);
+		expect(ctx.status.at(-1)).toEqual(["plan-mode", "plan mode"]);
+	});
+
+	it("discovers pi-lens query tools and blocks write operations at call time", async () => {
+		const pi = makeStubPi([
+			{ name: "lsp_navigation", sourceInfo: LENS_SOURCE },
+			{ name: "lens_diagnostics", sourceInfo: LENS_SOURCE },
+			{ name: "ast_grep_replace", sourceInfo: LENS_SOURCE },
+			{ name: "lens_diagnostic_mark", sourceInfo: LENS_SOURCE },
+		]);
+		install(pi);
+		const ctx = makeStubCtx();
+		await runCommand(pi, "plan", ctx);
+		const active = pi.calls.at(-1)?.setActiveTools ?? [];
+		expect(active).toContain("lsp_navigation");
+		expect(active).toContain("lens_diagnostics");
+		expect(active).not.toContain("ast_grep_replace");
+		const call = pi.events.get("tool_call")!;
+		expect(await call({ toolName: "lsp_navigation", input: { operation: "references" } }, ctx)).toBeUndefined();
+		expect((await call({ toolName: "lsp_navigation", input: { operation: "rename" } }, ctx) as { block: boolean }).block).toBe(true);
+		expect((await call({ toolName: "lsp_navigation", input: { operation: "codeAction", apply: true } }, ctx) as { block: boolean }).block).toBe(true);
+		expect((await call({ toolName: "ast_grep_replace", input: {} }, ctx) as { block: boolean }).block).toBe(true);
+		expect((await call({ toolName: "lens_diagnostic_mark", input: {} }, ctx) as { block: boolean }).block).toBe(true);
+	});
+
+	it("requires consent for a discovered subagent and remembers the exact source globally", async () => {
+		const filePath = join(tmpdir(), `plan-mode-trust-${randomUUID()}.json`);
+		try {
+			const pi = makeStubPi([AGENT_TOOL]);
+			install(pi, filePath);
+			const ctx = makeStubCtx("全局记住此工具");
+			await runCommand(pi, "plan", ctx);
+			expect(pi.calls.at(-1)?.setActiveTools).toContain(AGENT_TOOL.name);
+			const call = pi.events.get("tool_call")!;
+			expect(await call({ toolName: AGENT_TOOL.name, input: { mode: "general", prompt: "read only" } }, ctx)).toBeUndefined();
+			expect(ctx.selects).toHaveLength(1);
+			expect(ctx.selects[0]).toEqual(["仅本次允许", "全局记住此工具", "拒绝"]);
+			const anotherPi = makeStubPi([AGENT_TOOL]);
+			install(anotherPi, filePath);
+			await runCommand(anotherPi, "plan", ctx);
+			expect(await anotherPi.events.get("tool_call")!({ toolName: AGENT_TOOL.name, input: {} }, ctx)).toBeUndefined();
+			expect(ctx.selects).toHaveLength(1);
+			const changed = { ...AGENT_TOOL, sourceInfo: { ...AGENT_TOOL.sourceInfo, path: "/new-source/index.ts" } };
+			const changedPi = makeStubPi([changed]);
+			install(changedPi, filePath);
+			await runCommand(changedPi, "plan", ctx);
+			const noUi = { ...ctx, hasUI: false };
+			expect((await changedPi.events.get("tool_call")!({ toolName: changed.name, input: {} }, noUi) as { block: boolean }).block).toBe(true);
+		} finally {
+			await rm(filePath, { force: true });
+		}
+	});
+
+	it("one-time approval does not persist and denial blocks the call", async () => {
+		const pi = makeStubPi([AGENT_TOOL]);
+		install(pi);
+		const allowed = makeStubCtx("仅本次允许");
+		await runCommand(pi, "plan", allowed);
+		const call = pi.events.get("tool_call")!;
+		expect(await call({ toolName: AGENT_TOOL.name, input: {} }, allowed)).toBeUndefined();
+		const denied = makeStubCtx("拒绝");
+		expect((await call({ toolName: AGENT_TOOL.name, input: {} }, denied) as { block: boolean }).block).toBe(true);
+	});
+
+	it("concurrent calls each require consent after a one-time approval", async () => {
+		const pi = makeStubPi([AGENT_TOOL]);
+		install(pi);
+		const choices = ["仅本次允许", "拒绝"];
+		const ctx = makeStubCtx();
+		ctx.ui.select = async (_title: string, options: string[]) => {
+			ctx.selects.push(options);
+			return choices.shift();
+		};
+		await runCommand(pi, "plan", ctx);
+		const call = pi.events.get("tool_call")!;
+		const results = await Promise.all([
+			call({ toolName: AGENT_TOOL.name, input: { mode: "explore" } }, ctx),
+			call({ toolName: AGENT_TOOL.name, input: { mode: "explore" } }, ctx),
+		]);
+		expect(results.filter((result) => result === undefined)).toHaveLength(1);
+		expect(results.filter((result) => (result as { block?: boolean } | undefined)?.block)).toHaveLength(1);
+		expect(ctx.selects).toHaveLength(2);
 	});
 });
 
@@ -122,7 +236,7 @@ describe("proposed_plan dialog flow", () => {
 
 	it("selecting execute exits plan mode and sends the execute message", async () => {
 		const pi = makeStubPi();
-		planModeExtension(pi as never);
+		install(pi);
 		const ctx = makeStubCtx("是，实施此计划");
 		await runCommand(pi, "plan", ctx); // enter
 
@@ -138,7 +252,7 @@ describe("proposed_plan dialog flow", () => {
 
 	it("selecting refine changes nothing", async () => {
 		const pi = makeStubPi();
-		planModeExtension(pi as never);
+		install(pi);
 		const ctx = makeStubCtx("否，告诉 PI 应该如何做的不同");
 		await runCommand(pi, "plan", ctx);
 
@@ -152,7 +266,7 @@ describe("proposed_plan dialog flow", () => {
 
 	it("does not prompt without a complete plan block", async () => {
 		const pi = makeStubPi();
-		planModeExtension(pi as never);
+		install(pi);
 		const ctx = makeStubCtx("是，实施此计划");
 		await runCommand(pi, "plan", ctx);
 
@@ -164,7 +278,7 @@ describe("proposed_plan dialog flow", () => {
 
 	it("skips the dialog when UI is unavailable", async () => {
 		const pi = makeStubPi();
-		planModeExtension(pi as never);
+		install(pi);
 		const ctx = { ...makeStubCtx("是，实施此计划"), mode: "rpc" as const, hasUI: false };
 		await runCommand(pi, "plan", ctx);
 
@@ -176,7 +290,7 @@ describe("proposed_plan dialog flow", () => {
 
 	it("skips the dialog when the user already queued input", async () => {
 		const pi = makeStubPi();
-		planModeExtension(pi as never);
+		install(pi);
 		const ctx = { ...makeStubCtx("是，实施此计划"), hasPendingMessages: () => true };
 		await runCommand(pi, "plan", ctx);
 
@@ -187,7 +301,7 @@ describe("proposed_plan dialog flow", () => {
 
 	it("does not prompt when plan mode is off", async () => {
 		const pi = makeStubPi();
-		planModeExtension(pi as never);
+		install(pi);
 		const ctx = makeStubCtx("是，实施此计划");
 
 		await getAgentEnd(pi)({ messages: [assistantMsg(PLAN_BLOCK)] }, ctx);

@@ -12,23 +12,49 @@
  * alias to their host modules, plus typebox.
  */
 
-import type { ExtensionAPI, ExtensionContext } from "@mariozechner/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
 import { Key } from "@mariozechner/pi-tui";
+import { join } from "node:path";
 import { extractProposedPlan } from "./plan-detect.ts";
-import { isAllowedSubagentCall, isSafeCommand, PLAN_WHITELIST } from "./policy.ts";
+import {
+	isAllowedPiLensCall, isPiLensQueryTool, isSafeCommand, isThirdPartySubagentTool,
+	PLAN_WHITELIST, type AvailableTool,
+} from "./policy.ts";
 import { buildPlanModePrompt } from "./prompt.ts";
+import { createTrustStore } from "./trust.ts";
 
 const EXECUTE_OPTION = "是，实施此计划";
 const REFINE_OPTION = "否，告诉 PI 应该如何做的不同";
+const ALLOW_ONCE_OPTION = "仅本次允许";
+const TRUST_GLOBALLY_OPTION = "全局记住此工具";
+const DENY_OPTION = "拒绝";
 
 interface PlanModeState {
 	enabled: boolean;
 	toolsBeforePlanMode?: string[];
 }
 
-export default function planModeExtension(pi: ExtensionAPI): void {
+export default function planModeExtension(
+	pi: ExtensionAPI,
+	trustFilePath = join(getAgentDir(), "plan-mode", "trusted-subagents.json"),
+): void {
 	let planModeEnabled = false;
 	let toolsBeforePlanMode: string[] | undefined;
+	const trustStore = createTrustStore(trustFilePath);
+	let approvalQueue: Promise<void> = Promise.resolve();
+
+	function availableTool(name: string): AvailableTool | undefined {
+		return pi.getAllTools().find((tool) => tool.name === name);
+	}
+
+	function planToolNames(): string[] {
+		return [...new Set([
+			...PLAN_WHITELIST,
+			...pi.getAllTools()
+				.filter((tool) => isPiLensQueryTool(tool) || isThirdPartySubagentTool(tool))
+				.map((tool) => tool.name),
+		])];
+	}
 
 	function updateStatus(ctx: ExtensionContext): void {
 		ctx.ui.setStatus("plan-mode", planModeEnabled ? "plan mode" : undefined);
@@ -40,7 +66,7 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		}
 		// Unknown tool names are ignored by the loader, so listing tools that
 		// are not installed (e.g. ask_question) is safe.
-		pi.setActiveTools([...PLAN_WHITELIST]);
+		pi.setActiveTools(planToolNames());
 	}
 
 	function disable(): void {
@@ -72,8 +98,22 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("plan", {
-		description: "Toggle plan mode (read-only planning)",
-		handler: async (_args, ctx) => togglePlanMode(ctx),
+		description: "Toggle plan mode, or start planning the supplied task",
+		handler: async (args, ctx) => {
+			const task = args?.trim() ?? "";
+			if (!task) {
+				togglePlanMode(ctx);
+				return;
+			}
+			if (!planModeEnabled) togglePlanMode(ctx);
+			try {
+				pi.sendUserMessage(task, { deliverAs: "followUp" });
+			} catch (error) {
+				ctx.ui.setEditorText(`/plan ${task}`);
+				ctx.ui.notify("Could not send the planning task. The command was restored in the editor.", "error");
+				throw error;
+			}
+		},
 	});
 
 	pi.registerShortcut(Key.ctrlAlt("p"), {
@@ -81,13 +121,41 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		handler: async (ctx) => togglePlanMode(ctx),
 	});
 
-	// Hard guard: block anything outside the read-only whitelist, filter bash
-	// commands, and restrict subagent to read-only exploration. Catches tools
-	// hidden by setActiveTools and tools registered by other extensions.
-	pi.on("tool_call", async (event) => {
-		if (!planModeEnabled) return;
+	async function approveSubagent(tool: AvailableTool, input: unknown, ctx: ExtensionContext): Promise<boolean> {
+		if (await trustStore.isTrusted(tool)) return true;
+		if (ctx.mode !== "tui" || !ctx.hasUI) return false;
+		let release!: () => void;
+		const current = new Promise<void>((resolve) => { release = resolve; });
+		const previous = approvalQueue;
+		approvalQueue = previous.then(() => current);
+		await previous;
+		try {
+			if (await trustStore.isTrusted(tool)) return true;
+			const params = typeof input === "object" && input !== null ? input as Record<string, unknown> : {};
+			const mode = ["mode", "template", "profile", "agentType", "agent"]
+				.map((name) => params[name]).find((value) => typeof value === "string") ?? "not specified";
+			const source = `${tool.sourceInfo?.source ?? "unknown"} (${tool.sourceInfo?.path ?? "unknown"})`;
+			const choice = await ctx.ui.select(
+				`Plan mode subagent: ${tool.name}\nSource: ${source}\nMode/template: ${mode}\nRisk: this tool or its child may have write access.`,
+				[ALLOW_ONCE_OPTION, TRUST_GLOBALLY_OPTION, DENY_OPTION],
+			);
+			if (choice === TRUST_GLOBALLY_OPTION) {
+				await trustStore.trust(tool);
+				return true;
+			}
+			return choice === ALLOW_ONCE_OPTION;
+		} finally {
+			release();
+		}
+	}
 
-		if (!PLAN_WHITELIST.includes(event.toolName)) {
+	// Check every call, including tools activated later by other extensions.
+	pi.on("tool_call", async (event, ctx) => {
+		if (!planModeEnabled) return;
+		const tool = availableTool(event.toolName);
+		const isPiLens = tool !== undefined && isPiLensQueryTool(tool);
+		const isSubagent = tool !== undefined && isThirdPartySubagentTool(tool);
+		if (!PLAN_WHITELIST.includes(event.toolName) && !isPiLens && !isSubagent) {
 			return {
 				block: true,
 				reason: `Plan mode is read-only: the "${event.toolName}" tool is blocked. Exit plan mode with /plan to use it.`,
@@ -104,12 +172,14 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 			}
 		}
 
-		if (event.toolName === "subagent" && !isAllowedSubagentCall(event.input)) {
+		if (isPiLens && !isAllowedPiLensCall(event.toolName, event.input)) {
 			return {
 				block: true,
-				reason:
-					'Plan mode is read-only: subagent is limited to the explore agent (single task, or agent="list" discovery). Exit plan mode with /plan to use other agents.',
+				reason: "Plan mode allows pi-lens navigation queries only; mutation operations and apply:true are blocked.",
 			};
+		}
+		if (isSubagent && !(await approveSubagent(tool, event.input, ctx))) {
+			return { block: true, reason: "This third-party subagent was not approved for plan mode." };
 		}
 	});
 
@@ -188,6 +258,6 @@ export default function planModeExtension(pi: ExtensionAPI): void {
 		updateStatus(ctx);
 		persistState();
 		ctx.ui.notify("已退出计划模式，开始实施计划。");
-		pi.sendUserMessage("请按照上面的 proposed_plan 计划开始实施。", { deliverAs: "followUp" });
+		pi.sendUserMessage("Implement the approved <proposed_plan> above.", { deliverAs: "followUp" });
 	});
 }

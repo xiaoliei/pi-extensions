@@ -1,14 +1,13 @@
 /**
  * Tests for plan-mode policy: tool whitelist, bash command filtering,
- * and subagent call restrictions.
+ * and verified third-party tool boundaries.
  * Run: npm test (from packages/plan-mode)
  */
 
 import { describe, expect, it } from "vitest";
-import { isAllowedSubagentCall, isSafeCommand } from "../src/policy.ts";
+import { isAllowedPiLensCall, isPiLensQueryTool, isSafeCommand, isThirdPartySubagentTool, PLAN_WHITELIST } from "../src/policy.ts";
 
-const isPlanAllowedTool = (tool: string) =>
-	["read", "grep", "find", "ls", "bash", "ask_question", "question", "questionnaire", "subagent"].includes(tool);
+const isPlanAllowedTool = (tool: string) => PLAN_WHITELIST.includes(tool);
 
 describe("isPlanAllowedTool", () => {
 	it("allows read-only built-in tools", () => {
@@ -17,11 +16,10 @@ describe("isPlanAllowedTool", () => {
 		}
 	});
 
-	it("allows question tools and subagent", () => {
+	it("allows question tools", () => {
 		expect(isPlanAllowedTool("ask_question")).toBe(true);
 		expect(isPlanAllowedTool("question")).toBe(true);
 		expect(isPlanAllowedTool("questionnaire")).toBe(true);
-		expect(isPlanAllowedTool("subagent")).toBe(true);
 	});
 
 	it("blocks write tools and unknown tools", () => {
@@ -29,6 +27,7 @@ describe("isPlanAllowedTool", () => {
 		expect(isPlanAllowedTool("edit")).toBe(false);
 		expect(isPlanAllowedTool("apply_patch")).toBe(false);
 		expect(isPlanAllowedTool("todo")).toBe(false);
+		expect(isPlanAllowedTool("subagent")).toBe(false);
 		expect(isPlanAllowedTool("")).toBe(false);
 	});
 });
@@ -119,37 +118,29 @@ describe("isSafeCommand", () => {
 	});
 });
 
-describe("isAllowedSubagentCall", () => {
-	it("allows explore agent single task", () => {
-		expect(isAllowedSubagentCall({ agent: "explore", task: "map the src layout" })).toBe(true);
+describe("third-party tool discovery", () => {
+	const sourceInfo = { source: "npm:other-agents", path: "/extensions/other-agents/index.ts" };
+	it("discovers agents from current tool metadata, not a legacy tool name", () => {
+		expect(isThirdPartySubagentTool({ name: "delegate_research", description: "Delegate tasks to specialized subagents", sourceInfo })).toBe(true);
+		expect(isThirdPartySubagentTool({ name: "write", description: "Write files", sourceInfo })).toBe(false);
+		expect(isThirdPartySubagentTool({ name: "delegate_research", description: "Delegate tasks to specialized subagents" })).toBe(false);
 	});
-
-	it("allows roster discovery", () => {
-		expect(isAllowedSubagentCall({ agent: "list" })).toBe(true);
+	it("accepts verified pi-lens query tools only", () => {
+		const lens = { source: "npm:pi-lens", path: "/npm/pi-lens/index.js" };
+		expect(isPiLensQueryTool({ name: "lens_diagnostics", sourceInfo: lens })).toBe(true);
+		expect(isPiLensQueryTool({ name: "lsp_navigation", sourceInfo: lens })).toBe(true);
+		expect(isPiLensQueryTool({ name: "lens_diagnostic_mark", sourceInfo: lens })).toBe(false);
+		expect(isPiLensQueryTool({ name: "ast_grep_replace", sourceInfo: lens })).toBe(false);
+		expect(isPiLensQueryTool({ name: "lsp_navigation", sourceInfo })).toBe(false);
 	});
-
-	it("blocks non-explore agents", () => {
-		expect(isAllowedSubagentCall({ agent: "general", task: "do stuff" })).toBe(false);
-		expect(isAllowedSubagentCall({ agent: "planner", task: "plan" })).toBe(false);
-		expect(isAllowedSubagentCall({})).toBe(false);
-	});
-
-	it("blocks explore with empty or missing task", () => {
-		expect(isAllowedSubagentCall({ agent: "explore" })).toBe(false);
-		expect(isAllowedSubagentCall({ agent: "explore", task: "  " })).toBe(false);
-	});
-
-	it("blocks parallel and chain modes", () => {
-		expect(isAllowedSubagentCall({ tasks: [{ agent: "explore", task: "a" }] })).toBe(false);
-		expect(isAllowedSubagentCall({ chain: [{ agent: "explore", task: "a" }] })).toBe(false);
-		expect(isAllowedSubagentCall({ agent: "explore", task: "a", tasks: [{ agent: "explore", task: "b" }] })).toBe(
-			false,
-		);
-	});
-
-	it("rejects non-object input", () => {
-		expect(isAllowedSubagentCall(null)).toBe(false);
-		expect(isAllowedSubagentCall("explore")).toBe(false);
-		expect(isAllowedSubagentCall(undefined)).toBe(false);
+	it("permits LSP queries and blocks mutations or unknown operations", () => {
+		for (const operation of ["definition", "references", "codeAction", "workspaceDiagnostics"]) {
+			expect(isAllowedPiLensCall("lsp_navigation", { operation })).toBe(true);
+		}
+		for (const operation of ["rename", "rename_file", "executeCommand", "unknown"]) {
+			expect(isAllowedPiLensCall("lsp_navigation", { operation })).toBe(false);
+		}
+		expect(isAllowedPiLensCall("lsp_navigation", { operation: "codeAction", apply: true })).toBe(false);
+		expect(isAllowedPiLensCall("lsp_navigation", {})).toBe(false);
 	});
 });

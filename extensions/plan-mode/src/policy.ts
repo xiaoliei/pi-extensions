@@ -1,6 +1,5 @@
 /**
- * Pure plan-mode policy: read-only tool whitelist, bash command filtering,
- * and subagent call restrictions. No pi imports — directly unit-testable.
+ * Pure plan-mode policy. No pi imports — directly unit-testable.
  */
 
 // Read-only built-in tools. bash stays active but is command-filtered.
@@ -13,11 +12,50 @@ export const EXTRA_READONLY_TOOLS: readonly string[] = [
 	"questionnaire", // upstream example extension
 ];
 
-// subagent is allowed only for read-only exploration (see isAllowedSubagentCall).
-export const SUBAGENT_TOOL = "subagent";
-export const SUBAGENT_ALLOWED_AGENTS: ReadonlySet<string> = new Set(["explore"]);
+export const PLAN_WHITELIST: readonly string[] = [...CORE_READONLY_TOOLS, ...EXTRA_READONLY_TOOLS];
 
-export const PLAN_WHITELIST: readonly string[] = [...CORE_READONLY_TOOLS, ...EXTRA_READONLY_TOOLS, SUBAGENT_TOOL];
+// These pi-lens tools have been reviewed against the installed 4.3.0 tool contract.
+const PI_LENS_QUERY_TOOLS = new Set([
+	"lens_diagnostics",
+	"lsp_navigation",
+	"symbol_search",
+	"module_report",
+	"read_symbol",
+	"read_enclosing",
+	"project_report",
+	"ast_grep_search",
+	"ast_grep_outline",
+]);
+
+const LSP_QUERY_OPERATIONS = new Set([
+	"definition", "typeDefinition", "declaration", "references", "hover", "signatureHelp",
+	"documentSymbol", "findSymbol", "workspaceSymbol", "codeAction", "implementation",
+	"prepareCallHierarchy", "incomingCalls", "outgoingCalls", "workspaceDiagnostics", "capabilities",
+]);
+
+export interface AvailableTool {
+	name: string;
+	description?: string;
+	sourceInfo?: { path: string; source: string };
+}
+
+export function isPiLensQueryTool(tool: AvailableTool): boolean {
+	const source = `${tool.sourceInfo?.source ?? ""} ${tool.sourceInfo?.path ?? ""}`;
+	return PI_LENS_QUERY_TOOLS.has(tool.name) && /(?:^|[\\/\s:@])pi-lens(?:[\\/\s@]|$)/i.test(source);
+}
+
+export function isThirdPartySubagentTool(tool: AvailableTool): boolean {
+	if (!tool.sourceInfo?.path || !tool.sourceInfo.source) return false;
+	const text = `${tool.name} ${tool.description ?? ""}`;
+	return /sub[ -]?agent|delegate.{0,60}(?:agent|task)|(?:spawn|launch|run).{0,60}agent/i.test(text);
+}
+
+export function isAllowedPiLensCall(name: string, input: unknown): boolean {
+	if (name !== "lsp_navigation") return true;
+	if (typeof input !== "object" || input === null) return false;
+	const { operation, apply } = input as { operation?: unknown; apply?: unknown };
+	return typeof operation === "string" && LSP_QUERY_OPERATIONS.has(operation) && apply !== true;
+}
 
 // Destructive patterns: any hit blocks the command regardless of prefix.
 const DESTRUCTIVE_PATTERNS: RegExp[] = [
@@ -120,24 +158,4 @@ export function isSafeCommand(command: string): boolean {
 	const isDestructive = DESTRUCTIVE_PATTERNS.some((p) => p.test(command));
 	const isSafe = SAFE_PATTERNS.some((p) => p.test(command));
 	return !isDestructive && isSafe;
-}
-
-interface SubagentCallInput {
-	agent?: unknown;
-	task?: unknown;
-	tasks?: unknown;
-	chain?: unknown;
-}
-
-/** Allowed: read-only exploration via the explore agent (single mode) or roster discovery. */
-export function isAllowedSubagentCall(input: unknown): boolean {
-	if (typeof input !== "object" || input === null) return false;
-	const call = input as SubagentCallInput;
-
-	const hasTasks = Array.isArray(call.tasks) && call.tasks.length > 0;
-	const hasChain = Array.isArray(call.chain) && call.chain.length > 0;
-	if (hasTasks || hasChain) return false;
-
-	if (call.agent === "list" && call.task === undefined) return true; // discovery
-	return call.agent === "explore" && typeof call.task === "string" && call.task.trim().length > 0;
 }

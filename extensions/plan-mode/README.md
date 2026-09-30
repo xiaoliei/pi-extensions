@@ -7,6 +7,7 @@ Compatible with both original pi (`@earendil-works`) and the customized fork (`@
 ## Commands
 
 - `/plan` - toggle plan mode
+- `/plan <task>` - enable plan mode if needed and start a planning turn with the task
 - `--plan` - start in plan mode
 - `Ctrl+Alt+P` - toggle plan mode
 
@@ -14,13 +15,16 @@ Compatible with both original pi (`@earendil-works`) and the customized fork (`@
 
 - Read-only built-in tools: `read`, `grep`, `find`, `ls`, `bash` (read-only command allowlist)
 - Question tools: `ask_question` (from `@xiaoliyo/pi-ask-question`), `question`, `questionnaire`
-- `subagent`: only the `explore` agent, single-task mode (read-only exploration), plus `agent="list"` discovery
+- Installed third-party subagent tools discovered from pi's current tool catalog, after TUI consent (once or remembered globally for the exact tool and extension source)
+- Verified pi-lens query tools, including `lens_diagnostics` and query operations of `lsp_navigation`
 
-Everything else is hidden via `setActiveTools` and hard-blocked in `tool_call` (including write-capable tools registered by other extensions).
+Everything else is hidden via `setActiveTools` and blocked in `tool_call` (including write-capable tools activated later by other extensions). `lsp_navigation` blocks rename, rename-file, execute-command, and `apply: true`; code replacement and diagnostic marking remain unavailable.
+
+Third-party subagent consent displays the tool, source, selected mode, and possible write-access risk. Noninteractive calls without prior global consent are blocked. The trust record is stored under the global pi agent directory. Subagent work runs concurrently only when the third-party tool supports parallel calls or batch tasks.
 
 ## Extending the whitelist
 
-Append read-only tool names to `EXTRA_READONLY_TOOLS` in `src/policy.ts` (e.g. a future `todo` tool), then reload.
+Review the tool's behavior and add verified query tools to the pi-lens allowlist in `src/policy.ts`. New LSP tools are blocked until reviewed.
 
 ## Bash command filtering
 
@@ -28,7 +32,7 @@ A command must match a read-only prefix allowlist (cat/head/grep/find/git status
 
 ## Workflow injected into the model
 
-1. Explore the actual environment first: resolve discoverable facts (files, entry points, interfaces, tests) by reading and searching, not by asking the user.
+1. Explore the actual environment first: resolve discoverable facts (files, entry points, interfaces, tests) by reading and searching, not by asking the user. Check available third-party subagent modes or templates and prefer a read-only option.
 2. Confirm intent through dialogue: goal, success criteria, scope, constraints, preferences. Only ask what cannot be inferred from the repo; preference questions offer 2-4 mutually exclusive options with a recommended default (via `ask_question` when installed, otherwise numbered text options).
 3. Refine the design until decision-complete (approach, modules, interfaces, edge cases, test strategy, acceptance criteria).
 4. Output the final plan once, wrapped in `<proposed_plan>` ... `</proposed_plan>` tags (each tag on its own line, Markdown inside). Plan revisions are always emitted as a complete new plan.
