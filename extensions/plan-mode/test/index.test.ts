@@ -22,6 +22,10 @@ function assistantMsg(text: string) {
 }
 
 const AGENT_TOOL = { name: "delegate_research", description: "Delegate tasks to specialized subagents", sourceInfo: { source: "npm:agent-tool", path: "/agent-tool/index.ts" } };
+const TODO_SOURCE = { source: "npm:task-tracker", path: "/task-tracker/index.ts" };
+const TODO_READ = { name: "queue_view", description: "List Todo tasks and their status", sourceInfo: TODO_SOURCE };
+const TODO_GET = { name: "queue_detail", description: "Get complete details for one Todo task", sourceInfo: TODO_SOURCE };
+const TODO_WRITE = { name: "queue_record", description: "Create and update Todo tasks", sourceInfo: TODO_SOURCE };
 const LENS_SOURCE = { source: "npm:pi-lens", path: "/pi-lens/index.js" };
 
 function makeStubPi(tools: Array<{ name: string; description?: string; sourceInfo?: { source: string; path: string } }> = []) {
@@ -224,6 +228,56 @@ describe("plan-mode extension factory", () => {
 		const denied = makeStubCtx("拒绝");
 		expect((await call({ toolName: AGENT_TOOL.name, input: {} }, denied) as { block: boolean }).block).toBe(true);
 	});
+	it("discovers Todo tools and requests consent before the first call", async () => {
+		const pi = makeStubPi([TODO_READ, TODO_WRITE]);
+		install(pi);
+		const allowed = makeStubCtx("仅本次允许");
+		await runCommand(pi, "plan", allowed);
+		expect(pi.calls.at(-1)?.setActiveTools).toContain(TODO_READ.name);
+		expect(pi.calls.at(-1)?.setActiveTools).toContain(TODO_WRITE.name);
+		const call = pi.events.get("tool_call")!;
+		expect(await call({ toolName: TODO_READ.name, input: {} }, allowed)).toBeUndefined();
+		expect(allowed.selects).toHaveLength(1);
+		const denied = makeStubCtx("拒绝");
+		expect((await call({ toolName: TODO_WRITE.name, input: {} }, denied) as { block: boolean }).block).toBe(true);
+		expect((await call({ toolName: TODO_READ.name, input: {} }, { ...allowed, hasUI: false }) as { block: boolean }).block).toBe(true);
+	});
+
+	it("Todo read-only trust excludes writes and source changes require approval", async () => {
+		const filePath = join(tmpdir(), `plan-mode-todo-${randomUUID()}.json`);
+		try {
+			const pi = makeStubPi([TODO_READ, TODO_GET, TODO_WRITE]);
+			install(pi, filePath);
+			const ctx = makeStubCtx("全局同意该扩展的所有只读工具调用");
+			await runCommand(pi, "plan", ctx);
+			const call = pi.events.get("tool_call")!;
+			expect(await call({ toolName: TODO_READ.name, input: {} }, ctx)).toBeUndefined();
+			expect(await call({ toolName: TODO_GET.name, input: {} }, { ...ctx, hasUI: false })).toBeUndefined();
+			expect((await call({ toolName: TODO_WRITE.name, input: {} }, { ...ctx, hasUI: false }) as { block: boolean }).block).toBe(true);
+			const changed = { ...TODO_READ, sourceInfo: { ...TODO_SOURCE, path: "/new-task-tracker/index.ts" } };
+			const changedPi = makeStubPi([changed]);
+			install(changedPi, filePath);
+			await runCommand(changedPi, "plan", ctx);
+			expect((await changedPi.events.get("tool_call")!({ toolName: changed.name, input: {} }, { ...ctx, hasUI: false }) as { block: boolean }).block).toBe(true);
+		} finally {
+			await rm(filePath, { force: true });
+		}
+	});
+
+	it("Todo all-tools trust permits persistent updates", async () => {
+		const filePath = join(tmpdir(), `plan-mode-todo-all-${randomUUID()}.json`);
+		try {
+			const pi = makeStubPi([TODO_READ, TODO_WRITE]);
+			install(pi, filePath);
+			const ctx = makeStubCtx("全局同意该扩展的所有工具调用（包括写入工具）");
+			await runCommand(pi, "plan", ctx);
+			const call = pi.events.get("tool_call")!;
+			expect(await call({ toolName: TODO_WRITE.name, input: {} }, ctx)).toBeUndefined();
+			expect(await call({ toolName: TODO_READ.name, input: {} }, { ...ctx, hasUI: false })).toBeUndefined();
+		} finally {
+			await rm(filePath, { force: true });
+		}
+	});
 
 	it("concurrent calls each require consent after a one-time approval", async () => {
 		const pi = makeStubPi([AGENT_TOOL]);
@@ -266,6 +320,9 @@ describe("proposed_plan dialog flow", () => {
 		// tools restored (write back in the active set) + execution message sent
 		expect(pi.calls.some((c) => c.setActiveTools?.includes("write"))).toBe(true);
 		expect(pi.calls.at(-1)?.sendUserMessage?.[0]).toContain("proposed_plan");
+		expect(pi.calls.at(-1)?.sendUserMessage?.[0]).toContain("Todo tools");
+		expect(pi.calls.at(-1)?.sendUserMessage?.[0]).toContain("subagents");
+		expect(pi.calls.at(-1)?.sendUserMessage?.[0]).not.toContain("计划内容");
 		expect(ctx.status.at(-1)).toEqual(["plan-mode", undefined]); // status cleared
 	});
 

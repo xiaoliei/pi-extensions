@@ -11,7 +11,8 @@ interface TrustFile {
 }
 
 export function extensionTrustKey(tool: AvailableTool): string {
-	return tool.sourceInfo?.source || tool.sourceInfo?.path || tool.name;
+	const source = tool.sourceInfo;
+	return source ? `${source.source}\n${source.path}` : tool.name;
 }
 
 export function createTrustStore(filePath: string) {

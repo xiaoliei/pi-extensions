@@ -43,7 +43,7 @@ export function toolExtensionKey(tool: AvailableTool): string {
 export function isLikelyReadOnlyTool(tool: AvailableTool): boolean {
 	if (PLAN_WHITELIST.includes(tool.name) || isPiLensQueryTool(tool)) return true;
 	const text = `${tool.name} ${tool.description ?? ""}`;
-	return /(?:read|list|search|find|grep|inspect|explor|diagnos|navigat|symbol|report|query|lookup|discover|hover|definition|reference)/i.test(text)
+	return /(?:read|list|view|get|search|find|grep|inspect|explor|diagnos|navigat|symbol|report|query|lookup|discover|hover|definition|reference)/i.test(text)
 		&& !/(?:write|edit|replace|rename|delete|remove|apply|execute|command|create|update|mark|suppress|fix)/i.test(text);
 }
 
@@ -73,6 +73,12 @@ export function isThirdPartySubagentTool(tool: AvailableTool): boolean {
 	const mentionsDelegation = /delegat|(?:spawn|launch|dispatch).{0,40}(?:agent|task|worker|research|explor)|(?:agent|task|worker|research|explor).{0,40}(?:spawn|launch|dispatch)|parallel.{0,30}(?:task|research|agent)|background.{0,30}(?:task|agent)/i.test(text);
 	const mentionsResearchAgent = /(?:explor|research|worker).{0,60}agent|agent.{0,60}(?:explor|research|worker)/i.test(text);
 	return mentionsSubagent || mentionsDelegation || mentionsResearchAgent;
+}
+
+export function isThirdPartyTodoTool(tool: AvailableTool): boolean {
+	if (!tool.sourceInfo?.path || !tool.sourceInfo.source) return false;
+	const metadata = `${tool.name} ${tool.description ?? ""} ${tool.sourceInfo.source} ${tool.sourceInfo.path}`;
+	return /\btodo\b|task[- ]?list|task[- ]?track|(?:create|update|list|manage).{0,40}tasks/i.test(metadata.replace(/_/g, " "));
 }
 
 export function isAllowedPiLensCall(name: string, input: unknown): boolean {

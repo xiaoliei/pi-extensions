@@ -28,4 +28,11 @@ describe("planning prompt", () => {
 		expect(prompt).toContain("Parallelism comes from dispatching all calls before waiting");
 		expect(prompt).toContain("Your next assistant tool turn after LSP orientation must contain the complete fan-out dispatch");
 	});
+	it("guides dynamic Todo discovery without naming a fixed tool", () => {
+		const prompt = buildPlanModePrompt(true, true, true);
+		expect(prompt).toContain("Inspect the available tools for Todo or task-list capabilities");
+		expect(prompt).toContain("request plan-mode permission through its first call");
+		expect(prompt).toContain("Dispatch all independent read-only subagents before waiting");
+		expect(prompt).not.toMatch(/[\u3400-\u9fff]/u);
+	});
 });

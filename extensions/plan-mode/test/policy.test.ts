@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from "vitest";
-import { isAllowedPiLensCall, isPiLensQueryTool, isSafeCommand, isThirdPartySubagentTool, PLAN_WHITELIST } from "../src/policy.ts";
+import { isAllowedPiLensCall, isPiLensQueryTool, isSafeCommand, isThirdPartySubagentTool, isThirdPartyTodoTool, PLAN_WHITELIST } from "../src/policy.ts";
 
 const isPlanAllowedTool = (tool: string) => PLAN_WHITELIST.includes(tool);
 
@@ -126,6 +126,12 @@ describe("third-party tool discovery", () => {
 		expect(isThirdPartySubagentTool({ name: "run_unit", description: "Explore a repository using a read-only worker agent", sourceInfo })).toBe(true);
 		expect(isThirdPartySubagentTool({ name: "write", description: "Write files", sourceInfo })).toBe(false);
 		expect(isThirdPartySubagentTool({ name: "delegate_research", description: "Delegate tasks to specialized subagents" })).toBe(false);
+	});
+	it("discovers Todo capabilities without a fixed tool name", () => {
+		expect(isThirdPartyTodoTool({ name: "work_queue", description: "Create and update a persistent task list", sourceInfo })).toBe(true);
+		expect(isThirdPartyTodoTool({ name: "todo_get", description: "Inspect a Todo task", sourceInfo })).toBe(true);
+		expect(isThirdPartyTodoTool({ name: "write", description: "Write files", sourceInfo })).toBe(false);
+		expect(isThirdPartyTodoTool({ name: "todo_get", description: "Inspect a Todo task" })).toBe(false);
 	});
 	it("accepts every tool from the pi-lens source", () => {
 		const lens = { source: "npm:pi-lens", path: "/npm/pi-lens/index.js" };

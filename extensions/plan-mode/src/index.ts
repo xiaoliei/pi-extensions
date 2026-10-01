@@ -18,7 +18,7 @@ import { join } from "node:path";
 import { extractProposedPlan } from "./plan-detect.ts";
 import {
 	isAllowedPiLensCall, isLikelyReadOnlyTool, isPiLensQueryTool, isPiLensWritableTool, isReadOnlySubagentRequest,
-	isSafeCommand, isThirdPartySubagentTool, KNOWN_PI_LENS_TOOLS, PLAN_WHITELIST, toolExtensionKey, type AvailableTool,
+	isSafeCommand, isThirdPartySubagentTool, isThirdPartyTodoTool, KNOWN_PI_LENS_TOOLS, PLAN_WHITELIST, toolExtensionKey, type AvailableTool,
 } from "./policy.ts";
 import { buildPlanModePrompt } from "./prompt.ts";
 import { createTrustStore, type ExtensionTrustScope } from "./trust.ts";
@@ -53,7 +53,7 @@ export default function planModeExtension(
 			...PLAN_WHITELIST,
 			...KNOWN_PI_LENS_TOOLS.filter((name) => name !== "ast_grep_replace" && name !== "lens_diagnostic_mark"),
 			...pi.getAllTools()
-				.filter((tool) => (isPiLensQueryTool(tool) && !isPiLensWritableTool(tool)) || isThirdPartySubagentTool(tool))
+				.filter((tool) => (isPiLensQueryTool(tool) && !isPiLensWritableTool(tool)) || isThirdPartySubagentTool(tool) || isThirdPartyTodoTool(tool))
 				.map((tool) => tool.name),
 		])];
 	}
@@ -135,9 +135,10 @@ export default function planModeExtension(
 		handler: async (ctx) => togglePlanMode(ctx),
 	});
 
-	async function approveSubagent(tool: AvailableTool, input: unknown, ctx: ExtensionContext): Promise<boolean> {
+	async function approveThirdPartyTool(tool: AvailableTool, input: unknown, ctx: ExtensionContext, isSubagent: boolean): Promise<boolean> {
+		const readonlyCall = isSubagent ? isReadOnlySubagentRequest(input) : isLikelyReadOnlyTool(tool);
 		const existingScope = await trustStore.getScope(tool);
-		if (existingScope === "all" || (existingScope === "readonly" && isReadOnlySubagentRequest(input))) return true;
+		if (existingScope === "all" || (existingScope === "readonly" && readonlyCall)) return true;
 		if (ctx.mode !== "tui" || !ctx.hasUI) return false;
 		let release!: () => void;
 		const current = new Promise<void>((resolve) => { release = resolve; });
@@ -146,7 +147,7 @@ export default function planModeExtension(
 		await previous;
 		try {
 			const currentScope = await trustStore.getScope(tool);
-			if (currentScope === "all" || (currentScope === "readonly" && isReadOnlySubagentRequest(input))) return true;
+			if (currentScope === "all" || (currentScope === "readonly" && readonlyCall)) return true;
 			const params = typeof input === "object" && input !== null ? input as Record<string, unknown> : {};
 			const mode = ["mode", "template", "profile", "agentType", "agent"]
 				.map((name) => params[name]).find((value) => typeof value === "string") ?? "not specified";
@@ -163,7 +164,7 @@ export default function planModeExtension(
 				const scope = choice === TRUST_ALL_EXTENSION_OPTION ? "all" : "readonly";
 				await trustStore.trustExtension(tool, scope);
 				enableTrustedTools(extensionTools, scope);
-				return true;
+				return scope === "all" || readonlyCall;
 			}
 			return choice === ALLOW_ONCE_OPTION;
 		} finally {
@@ -178,10 +179,11 @@ export default function planModeExtension(
 		const isPiLens = tool !== undefined && isPiLensQueryTool(tool);
 		const isPiLensWritable = tool !== undefined && isPiLensWritableTool(tool);
 		const isSubagent = tool !== undefined && isThirdPartySubagentTool(tool);
+		const isTodo = tool !== undefined && isThirdPartyTodoTool(tool);
 		const extensionScope = tool ? await trustStore.getScope(tool) : undefined;
 		const globallyAllowed = tool !== undefined && extensionScope === "all";
 		const globallyReadOnly = tool !== undefined && extensionScope === "readonly" && isLikelyReadOnlyTool(tool);
-		if (!PLAN_WHITELIST.includes(event.toolName) && !isPiLens && !isSubagent && !globallyAllowed && !globallyReadOnly) {
+		if (!PLAN_WHITELIST.includes(event.toolName) && !isPiLens && !isSubagent && !isTodo && !globallyAllowed && !globallyReadOnly) {
 			return {
 				block: true,
 				reason: `Plan mode is read-only: the "${event.toolName}" tool is blocked. Exit plan mode with /plan to use it.`,
@@ -204,8 +206,8 @@ export default function planModeExtension(
 				reason: "Plan mode allows pi-lens navigation queries only; mutation operations and apply:true are blocked.",
 			};
 		}
-		if (isSubagent && !globallyAllowed && !(await approveSubagent(tool, event.input, ctx))) {
-			return { block: true, reason: "This third-party subagent was not approved for plan mode." };
+		if ((isSubagent || isTodo) && !globallyAllowed && !(await approveThirdPartyTool(tool, event.input, ctx, isSubagent))) {
+			return { block: true, reason: "This third-party tool was not approved for plan mode." };
 		}
 	});
 
@@ -288,6 +290,6 @@ export default function planModeExtension(
 		updateStatus(ctx);
 		persistState();
 		ctx.ui.notify("已退出计划模式，开始实施计划。");
-		pi.sendUserMessage("Implement the approved <proposed_plan> above.", { deliverAs: "followUp" });
+		pi.sendUserMessage("Implement the approved <proposed_plan> above. Plan mode has ended; you may now edit files and use the tools currently available. If Todo tools are available, inspect and update the current list as appropriate. Delegate independent implementation tasks to separate subagents when their tools and permissions support it; dispatch them before waiting. Keep changes within the approved plan, verify the affected behavior, repair failures, and report what changed and what was tested.", { deliverAs: "followUp" });
 	});
 }
