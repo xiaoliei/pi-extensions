@@ -33,5 +33,5 @@ No runtime dependencies. Works on Windows, WSL, macOS, and Linux (wl-paste/xclip
 ## Notes
 
 - Clipboard image support: PNG/JPEG/GIF/WebP. BMP and exotic formats fall back to file-path attachment.
-- The paste keybinding is matched against pi's default (`ctrl+v`, `alt+v` on Windows). Custom rebinds of `app.clipboard.pasteImage` are not observed.
+- The paste keybinding is matched against pi's default (`ctrl+v`, `alt+v` on Windows). On Windows both Ctrl+V and Alt+V trigger the tray. Note: Windows Terminal intercepts Ctrl+V for text-only pasting — image-only clipboards need Alt+V there (or remove WT's Ctrl+V binding). Custom rebinds of `app.clipboard.pasteImage` are not observed.
 - In RPC mode the tray still works for submission; the thumbnail widget is TUI-only.

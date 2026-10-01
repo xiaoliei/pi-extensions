@@ -20,15 +20,19 @@ import { tmpdir } from "node:os";
 import { basename, isAbsolute, join, resolve } from "node:path";
 import type { ExtensionAPI, ExtensionContext, Theme } from "@mariozechner/pi-coding-agent";
 import { Container, Image, Text, type TUI } from "@mariozechner/pi-tui";
+import { isKeyRelease, matchesKey, type KeyId } from "@mariozechner/pi-tui";
 import { type Attachment, buildSubmission, detectImageMimeType, parsePastePaths, parseUriList } from "./logic.ts";
 
 const WIDGET_ID = "attachments";
 const THUMBNAIL_CELLS = 14; // ~7 rows tall; interactive-mode caps widgets at 10 lines
-const PASTE_IMAGE_KEYS: readonly string[] = ["\x16", "\x1b[118;5u"]; // legacy + kitty Ctrl+V
-// Core binds app.clipboard.pasteImage to alt+v on Windows only.
-// Legacy Alt+V is ESC+v; kitty encodes it as CSI 118;3u.
-const PASTE_IMAGE_KEYS_WIN32: readonly string[] = ["\x1bv", "\x1b[118;3u"];
 const BRACKETED_PASTE_START = "\x1b[200~";
+// Paste shortcuts matched with pi-tui's matchesKey so every terminal encoding is
+// covered (legacy \x16, kitty CSI u with/without event-type suffix, modifyOtherKeys).
+// Windows: Alt+V is the core default (Ctrl+V is taken by Windows Terminal);
+// other platforms: Ctrl+V. Note Windows Terminal intercepts Ctrl+V itself and
+// only forwards text pastes, so image-only clipboards need Alt+V there.
+const PASTE_SHORTCUTS: KeyId[] =
+	process.platform === "win32" ? ["alt+v", "ctrl+v"] : ["ctrl+v"];
 
 type QueueState = {
 	attachments: Attachment[];
@@ -345,7 +349,9 @@ export default function attachmentsExtension(pi: ExtensionAPI): void {
 			}
 
 			// Paste key: image > file list > text path > let through.
-			const isPasteKey = (process.platform === "win32" ? PASTE_IMAGE_KEYS_WIN32 : PASTE_IMAGE_KEYS).includes(data);
+			// Kitty event-report mode also sends key releases; ignore those.
+			if (isKeyRelease(data)) return undefined;
+			const isPasteKey = PASTE_SHORTCUTS.some((id) => matchesKey(data, id));
 			if (isPasteKey) {
 				const image = readClipboardImage();
 				if (image && addPaths([image.path]) > 0) {
